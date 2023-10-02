@@ -1,4 +1,4 @@
-module blipblop
+module keyboardsoundmapper
 
 go 1.21
 
