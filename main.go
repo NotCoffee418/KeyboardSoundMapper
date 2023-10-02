@@ -9,14 +9,16 @@ import (
 	"github.com/faiface/beep/wav"
 	"io/fs"
 	"syscall"
+	"time"
 	"unsafe"
 )
 
 //go:embed sounds/*
 var embeddedSounds embed.FS
 var (
-	soundBuffers = map[uint8]*beep.Buffer{}
-	mixer        *beep.Mixer
+	soundBuffers     = map[uint8]*beep.Buffer{}
+	mixer            *beep.Mixer
+	audioRequestChan = make(chan uint8)
 )
 
 func init() {
@@ -69,6 +71,10 @@ func main() {
 		soundBuffers[i] = buffer
 	}
 
+	// Start the audio request handler
+	go playRequestHandler()
+	defer close(audioRequestChan)
+
 	fmt.Println("App started")
 
 	// Set up the hook
@@ -114,10 +120,8 @@ func hookCallback(nCode int, wparam, lparam uintptr) uintptr {
 	result, _, _ := procCallNextHookEx.Call(0, uintptr(nCode), wparam, lparam)
 
 	if nCode >= 0 && wparam == 0x100 { // WM_KEYDOWN
-		go func() {
-			vkCode := *(*uint32)(unsafe.Pointer(lparam))
-			handleKeyDown(vkCode) //
-		}()
+		vkCode := *(*uint32)(unsafe.Pointer(lparam))
+		handleKeyDown(vkCode) //
 	}
 
 	return result
@@ -126,11 +130,24 @@ func hookCallback(nCode int, wparam, lparam uintptr) uintptr {
 func handleKeyDown(vkCode uint32) {
 	//fmt.Println("Key down:", vkCode)
 	if sound, exists := soundMap[vkCode]; exists {
-		playSound(sound)
+		//debug("handleKeyDown")
+		requestSound(sound)
+	}
+}
+
+func requestSound(soundID uint8) {
+	audioRequestChan <- soundID
+}
+
+func playRequestHandler() {
+	for {
+		i := <-audioRequestChan
+		playSound(i)
 	}
 }
 
 func playSound(soundID uint8) {
+	//debug("playSound")
 	buffer, exists := soundBuffers[soundID]
 	if !exists {
 		panic(fmt.Sprintf("Sound %d does not exist", soundID))
@@ -139,4 +156,14 @@ func playSound(soundID uint8) {
 	streamer := buffer.Streamer(0, buffer.Len())
 	mixer.Add(streamer)
 	//fmt.Println("Playing sound", soundID)
+	//debug("played")
+}
+
+var debugPrevTime time.Time
+
+func debug(msg string) {
+	now := time.Now()
+	delta := float64(now.Sub(debugPrevTime).Microseconds())
+	fmt.Printf("%s %.0f ns\n", msg, delta)
+	debugPrevTime = now
 }
